@@ -73,7 +73,7 @@ but some modules are JNI bindings to the C++ library.
      - (Experimental) A library for converting Avro data to Arrow data.
      - Native
    * - arrow-protobuf
-     - (Experimental) A library for converting Protobuf data to Arrow data.
+     - (Experimental) A library for converting between Protobuf and Arrow data.
      - Native
    * - arrow-compression
      - (Experimental) A library for working with compression/decompression of Arrow data.

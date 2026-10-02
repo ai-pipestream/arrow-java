@@ -29,7 +29,7 @@ under the License.
 
   <artifactId>arrow-protobuf</artifactId>
   <name>Arrow Protobuf Adapter</name>
-  <description>(Contrib/Experimental) A library for converting Protobuf data to Arrow data.</description>
+  <description>(Contrib/Experimental) A library for converting between Protobuf and Arrow data.</description>
 
   <dependencies>
     <dependency>
@@ -62,21 +62,6 @@ under the License.
 
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-dependency-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>analyze</id>
-            <configuration>
-              <ignoredDependencies combine.children="append">
-                <!-- required by module-info.java, so that JsonFormat can use Gson on the module path -->
-                <ignoredDependency>com.google.code.gson:gson</ignoredDependency>
-              </ignoredDependencies>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
       <plugin>
         <groupId>org.xolstice.maven.plugins</groupId>
         <artifactId>protobuf-maven-plugin</artifactId>

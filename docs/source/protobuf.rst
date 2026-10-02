@@ -23,7 +23,7 @@ The Arrow Protobuf Adapter assists with working with Protocol Buffers
 and Arrow data. It works from message descriptors, so descriptors of
 generated message classes and descriptors loaded at runtime are both
 supported. Currently, it supports converting message descriptors to
-Arrow schemas, and messages to Arrow VectorSchemaRoots.
+Arrow schemas, and messages to Arrow VectorSchemaRoots and back.
 
 The adapter is experimental. The well-known types
 ``google.protobuf.Duration`` and ``Any``, and wrapper types such as
@@ -197,3 +197,49 @@ version of the enum. By default, converting such a value fails.
 ``setUnknownEnumValues(UnknownEnumValues.NULL)`` converts it to null
 with the other mappings, which makes the fields of open enum types
 nullable, including list elements and map values.
+
+VectorSchemaRoot to Message Conversion
+======================================
+
+This can be accessed via the ArrowToProtobufUtils class. The resulting
+CompositeProtobufProducer sets the fields of a message builder from a
+row of the vectors, which are matched to the fields by name. Both
+generated builders and ``DynamicMessage.Builder`` are supported.
+
+.. code-block:: java
+
+   CompositeProtobufProducer producer = ArrowToProtobufUtils.createCompositeProducer(
+       root.getFieldVectors(), MyMessage.getDescriptor(), iterator.getDictionaryProvider());
+   for (int row = 0; row < root.getRowCount(); row++) {
+     MyMessage.Builder builder = MyMessage.newBuilder();
+     producer.produce(row, builder);
+     MyMessage message = builder.build();
+   }
+
+The vectors can have the types that the fields are mapped to, with any
+of the options above. Strings and enum names can also be LargeUtf8 or
+Utf8View, and bytes LargeBinary or BinaryView. Timestamps must have a
+time zone. Strings are decoded as UTF-8, and invalid UTF-8, which Arrow
+does not allow, is replaced with U+FFFD rather than rejected. The JSON
+of ``google.protobuf.Struct``, ``Value`` and ``ListValue`` fields must
+be a single JSON value as defined by RFC 8259, without duplicate keys,
+unpaired surrogates or numbers out of the range of doubles, and nested
+at most 100 levels deep.
+
+Null values clear the field, and a null list or map becomes an empty
+one. Fields without a vector are left unchanged, so a builder that is
+reused must be cleared first unless the vectors cover every field.
+Lists cannot have null elements, maps cannot have null entries, keys or
+values, and at most one field of a oneof can be non-null. A map that
+holds a key more than once keeps the last value, as protobuf parsing
+does.
+
+Some information does not survive a conversion to Arrow and back:
+timestamps are rounded down to the configured unit, a
+``google.protobuf.Value`` without a kind becomes a JSON null, invalid
+UTF-8 in proto2 strings becomes U+FFFD, and extensions and unknown
+fields are not converted. Unknown enum values
+are only kept by ``EnumMapping.NUMBER``. With
+``UnknownEnumValues.NULL``, they become null, so converting them back
+clears singular fields, which then have their default value, and fails
+for list elements and map values.

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-/** Converts protobuf messages to Arrow data. */
+/** Converts between protobuf messages and Arrow data. */
 @SuppressWarnings("requires-transitive-automatic")
 module org.apache.arrow.adapter.protobuf {
   exports org.apache.arrow.adapter.protobuf;

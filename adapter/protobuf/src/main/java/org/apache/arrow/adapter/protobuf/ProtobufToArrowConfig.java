@@ -47,7 +47,11 @@ public final class ProtobufToArrowConfig {
   public enum UnknownEnumValues {
     /** Converting a message with an unknown enum value fails. */
     FAIL,
-    /** Unknown enum values are converted to null, so fields of open enum types are nullable. */
+    /**
+     * Unknown enum values are converted to null, so fields of open enum types are nullable.
+     * Converting the nulls back to protobuf clears singular fields, and fails for list elements and
+     * map values.
+     */
     NULL
   }
 

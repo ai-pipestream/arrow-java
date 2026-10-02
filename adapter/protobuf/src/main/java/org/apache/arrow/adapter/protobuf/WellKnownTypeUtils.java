@@ -16,12 +16,21 @@
  */
 package org.apache.arrow.adapter.protobuf;
 
+import com.google.gson.Strictness;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
 import com.google.protobuf.util.JsonFormat;
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.apache.arrow.vector.types.TimeUnit;
 
 /** Conversions of the protobuf well-known types that have a dedicated Arrow mapping. */
@@ -46,6 +55,8 @@ final class WellKnownTypeUtils {
 
   private static final JsonFormat.Printer JSON_PRINTER =
       JsonFormat.printer().omittingInsignificantWhitespace();
+
+  private static final JsonFormat.Parser JSON_PARSER = JsonFormat.parser();
 
   private WellKnownTypeUtils() {}
 
@@ -87,6 +98,26 @@ final class WellKnownTypeUtils {
     }
   }
 
+  /** Builds a google.protobuf.Timestamp from a timestamp in the given unit. */
+  static Message toProtobufTimestamp(long value, TimeUnit unit, Message.Builder builder) {
+    long unitsPerSecond = getUnitsPerSecond(unit);
+    long seconds = Math.floorDiv(value, unitsPerSecond);
+    if (seconds < MIN_TIMESTAMP_SECONDS || seconds > MAX_TIMESTAMP_SECONDS) {
+      throw new IllegalArgumentException(
+          "Timestamp "
+              + value
+              + " in unit "
+              + unit
+              + " is out of the range of protobuf timestamps");
+    }
+    long nanos = Math.floorMod(value, unitsPerSecond) * (NANOS_PER_SECOND / unitsPerSecond);
+    Descriptor timestampType = builder.getDescriptorForType();
+    return builder
+        .setField(timestampType.findFieldByNumber(1), seconds)
+        .setField(timestampType.findFieldByNumber(2), (int) nanos)
+        .buildPartial();
+  }
+
   private static long getUnitsPerSecond(TimeUnit unit) {
     switch (unit) {
       case SECOND:
@@ -110,6 +141,92 @@ final class WellKnownTypeUtils {
     } catch (InvalidProtocolBufferException e) {
       throw new IllegalArgumentException(
           "Cannot print " + message.getDescriptorForType().getFullName() + " as JSON", e);
+    }
+  }
+
+  /** Parses JSON into a google.protobuf.Struct, Value or ListValue of the given field. */
+  static Message fromJson(String json, FieldDescriptor field, Message.Builder builder) {
+    try {
+      // JsonFormat's parser is lenient, and reads malformed JSON as some other value
+      checkJson(json);
+      JSON_PARSER.merge(json, builder);
+    } catch (IllegalArgumentException | InvalidProtocolBufferException e) {
+      throw new IllegalArgumentException("Invalid JSON for field " + field.getFullName(), e);
+    }
+    return builder.buildPartial();
+  }
+
+  /**
+   * Checks that the text is a single JSON value as defined by RFC 8259, without duplicate keys,
+   * unpaired surrogates or numbers out of the range of doubles, and nested at most MAX_JSON_DEPTH
+   * levels deep.
+   */
+  private static void checkJson(String json) {
+    JsonReader reader = new JsonReader(new StringReader(json));
+    reader.setStrictness(Strictness.STRICT);
+    Deque<Set<String>> objectKeys = new ArrayDeque<>();
+    int depth = 0;
+    try {
+      do {
+        switch (reader.peek()) {
+          case BEGIN_ARRAY:
+            reader.beginArray();
+            depth++;
+            break;
+          case END_ARRAY:
+            reader.endArray();
+            depth--;
+            break;
+          case BEGIN_OBJECT:
+            reader.beginObject();
+            objectKeys.push(new HashSet<>());
+            depth++;
+            break;
+          case END_OBJECT:
+            reader.endObject();
+            objectKeys.pop();
+            depth--;
+            break;
+          case NAME:
+            String name = reader.nextName();
+            checkSurrogates(name, reader.getPath());
+            if (!objectKeys.peek().add(name)) {
+              throw new IllegalArgumentException("Duplicate key at path " + reader.getPath());
+            }
+            break;
+          case STRING:
+            checkSurrogates(reader.nextString(), reader.getPreviousPath());
+            break;
+          case NUMBER:
+            if (Double.isInfinite(Double.parseDouble(reader.nextString()))) {
+              throw new IllegalArgumentException(
+                  "Number out of the range of doubles at path " + reader.getPreviousPath());
+            }
+            break;
+          default:
+            reader.skipValue();
+            break;
+        }
+        if (depth > MAX_JSON_DEPTH) {
+          throw new IllegalArgumentException(
+              "JSON value is nested more than " + MAX_JSON_DEPTH + " levels deep");
+        }
+      } while (depth > 0);
+      if (reader.peek() != JsonToken.END_DOCUMENT) {
+        throw new IllegalArgumentException("More than one JSON value");
+      }
+    } catch (IOException e) {
+      // Gson's messages suggest a lenient mode, which would accept the malformed JSON
+      throw new IllegalArgumentException("Malformed JSON at path " + reader.getPath(), e);
+    }
+  }
+
+  /** Checks that a string has no unpaired surrogates, which protobuf strings cannot hold. */
+  private static void checkSurrogates(String string, String path) {
+    if (string
+        .codePoints()
+        .anyMatch(c -> c >= Character.MIN_SURROGATE && c <= Character.MAX_SURROGATE)) {
+      throw new IllegalArgumentException("Unpaired surrogate at path " + path);
     }
   }
 
