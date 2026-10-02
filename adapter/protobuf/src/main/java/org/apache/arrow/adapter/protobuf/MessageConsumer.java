@@ -33,6 +33,7 @@ import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.TimeStampVector;
 import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -41,6 +42,8 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
+import org.apache.arrow.vector.types.TimeUnit;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 /** Writes the fields of protobuf messages to the vectors of the schema of their descriptor. */
 final class MessageConsumer {
@@ -189,15 +192,39 @@ final class MessageConsumer {
       case ENUM:
         return createEnumConsumer(field, vector, config);
       case MESSAGE:
+        Descriptor messageType = field.getMessageType();
+        if (WellKnownTypeUtils.isTimestamp(messageType)) {
+          return createTimestampConsumer((TimeStampVector) vector, messageType);
+        }
+        if (WellKnownTypeUtils.isJson(messageType)) {
+          VarCharVector jsonVector = (VarCharVector) vector;
+          return (index, value) ->
+              jsonVector.setSafe(
+                  index,
+                  WellKnownTypeUtils.toJson((Message) value).getBytes(StandardCharsets.UTF_8));
+        }
         StructVector structVector = (StructVector) vector;
         MessageConsumer fieldsConsumer =
             new MessageConsumer(
-                field.getMessageType().getFields(), structVector.getChildrenFromFields(), config);
+                messageType.getFields(), structVector.getChildrenFromFields(), config);
         return createMessageConsumer(structVector, fieldsConsumer);
       default:
         throw new UnsupportedOperationException(
             "Unsupported type " + field.getType() + " of field " + field.getFullName());
     }
+  }
+
+  private static ValueConsumer createTimestampConsumer(
+      TimeStampVector vector, Descriptor timestampType) {
+    FieldDescriptor secondsField = timestampType.findFieldByNumber(1);
+    FieldDescriptor nanosField = timestampType.findFieldByNumber(2);
+    TimeUnit unit = ((ArrowType.Timestamp) vector.getField().getType()).getUnit();
+    return (index, value) -> {
+      Message timestamp = (Message) value;
+      long seconds = (Long) timestamp.getField(secondsField);
+      int nanos = (Integer) timestamp.getField(nanosField);
+      vector.setSafe(index, WellKnownTypeUtils.toArrowTimestamp(seconds, nanos, unit));
+    };
   }
 
   private static ValueConsumer createEnumConsumer(

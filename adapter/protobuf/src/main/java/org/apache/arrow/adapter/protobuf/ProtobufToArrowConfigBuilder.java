@@ -18,6 +18,7 @@ package org.apache.arrow.adapter.protobuf;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.dictionary.DictionaryProvider;
+import org.apache.arrow.vector.types.TimeUnit;
 
 /** This class builds {@link ProtobufToArrowConfig}s. */
 public final class ProtobufToArrowConfigBuilder {
@@ -33,6 +34,8 @@ public final class ProtobufToArrowConfigBuilder {
   private ProtobufToArrowConfig.UnknownEnumValues unknownEnumValues;
 
   private boolean unsignedAsSigned;
+
+  private TimeUnit timestampUnit;
 
   /**
    * Constructs a builder for converting descriptors to schemas. Converting messages requires an
@@ -54,6 +57,7 @@ public final class ProtobufToArrowConfigBuilder {
     this.enumMapping = ProtobufToArrowConfig.EnumMapping.DICTIONARY;
     this.unknownEnumValues = ProtobufToArrowConfig.UnknownEnumValues.FAIL;
     this.unsignedAsSigned = false;
+    this.timestampUnit = TimeUnit.MICROSECOND;
   }
 
   /**
@@ -129,12 +133,31 @@ public final class ProtobufToArrowConfigBuilder {
   }
 
   /**
+   * Sets the unit of the UTC timestamps that google.protobuf.Timestamp fields are mapped to. The
+   * default is {@link TimeUnit#MICROSECOND}, which covers the full range of protobuf timestamps.
+   * {@link TimeUnit#NANOSECOND} keeps full precision, but only covers the years 1677 to 2262.
+   *
+   * @param timestampUnit the unit of the timestamps
+   * @return this builder
+   */
+  public ProtobufToArrowConfigBuilder setTimestampUnit(TimeUnit timestampUnit) {
+    this.timestampUnit = timestampUnit;
+    return this;
+  }
+
+  /**
    * Builds the {@link ProtobufToArrowConfig} from the provided params.
    *
    * @return the config
    */
   public ProtobufToArrowConfig build() {
     return new ProtobufToArrowConfig(
-        allocator, targetBatchSize, provider, enumMapping, unknownEnumValues, unsignedAsSigned);
+        allocator,
+        targetBatchSize,
+        provider,
+        enumMapping,
+        unknownEnumValues,
+        unsignedAsSigned,
+        timestampUnit);
   }
 }

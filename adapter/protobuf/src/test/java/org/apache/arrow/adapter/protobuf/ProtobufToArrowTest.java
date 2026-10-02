@@ -27,7 +27,11 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
+import com.google.protobuf.ListValue;
 import com.google.protobuf.Message;
+import com.google.protobuf.Struct;
+import com.google.protobuf.Timestamp;
+import com.google.protobuf.Value;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -46,6 +50,7 @@ import org.apache.arrow.adapter.protobuf.TestProtos.Presence;
 import org.apache.arrow.adapter.protobuf.TestProtos.Scalars;
 import org.apache.arrow.adapter.protobuf.TestProtos.Shape;
 import org.apache.arrow.adapter.protobuf.TestProtos.Size;
+import org.apache.arrow.adapter.protobuf.TestProtos.WellKnownTypes;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
@@ -58,6 +63,7 @@ import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
 import org.apache.arrow.vector.dictionary.Dictionary;
 import org.apache.arrow.vector.dictionary.DictionaryProvider;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -107,6 +113,18 @@ public class ProtobufToArrowTest {
 
   private static Map<String, Object> item(String name, long quantity) {
     return Map.of("name", new Text(name), "quantity", quantity);
+  }
+
+  private static Value numberValue(double number) {
+    return Value.newBuilder().setNumberValue(number).build();
+  }
+
+  private static Value nestedListValue(int depth) {
+    Value value = Value.newBuilder().setBoolValue(true).build();
+    for (int i = 0; i < depth; i++) {
+      value = Value.newBuilder().setListValue(ListValue.newBuilder().addValues(value)).build();
+    }
+    return value;
   }
 
   private static List<Object> getValues(FieldVector vector) {
@@ -408,6 +426,149 @@ public class ProtobufToArrowTest {
   }
 
   @Test
+  public void testTimestamps() {
+    WellKnownTypes message =
+        WellKnownTypes.newBuilder()
+            .setTimestamp(Timestamp.newBuilder().setSeconds(1).setNanos(500_000_999))
+            .addTimestamps(Timestamp.newBuilder().setSeconds(-1).setNanos(500_000_000))
+            .build();
+
+    // Timestamps are rounded down to the unit
+    try (VectorSchemaRoot root =
+        convert(WellKnownTypes.getDescriptor(), message, WellKnownTypes.getDefaultInstance())) {
+      assertEquals(Arrays.asList(1_500_000L, null), getValues(root.getVector("timestamp")));
+      assertEquals(List.of(-500_000L), root.getVector("timestamps").getObject(0));
+    }
+    try (VectorSchemaRoot root =
+        convert(
+            WellKnownTypes.getDescriptor(),
+            configBuilder().setTimestampUnit(TimeUnit.NANOSECOND),
+            message)) {
+      assertEquals(1_500_000_999L, root.getVector("timestamp").getObject(0));
+    }
+
+    WellKnownTypes maxTimestamp =
+        WellKnownTypes.newBuilder()
+            .setTimestamp(Timestamp.newBuilder().setSeconds(253402300799L))
+            .build();
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                convert(
+                    WellKnownTypes.getDescriptor(),
+                    configBuilder().setTimestampUnit(TimeUnit.NANOSECOND),
+                    maxTimestamp));
+    assertEquals(
+        "Timestamp of 253402300799 seconds is out of range for unit NANOSECOND", e.getMessage());
+
+    // The earliest nanosecond timestamp, 1677-09-21T00:12:43.145224192Z, and the one before it
+    WellKnownTypes minTimestamp =
+        WellKnownTypes.newBuilder()
+            .setTimestamp(Timestamp.newBuilder().setSeconds(-9223372037L).setNanos(145_224_192))
+            .build();
+    try (VectorSchemaRoot root =
+        convert(
+            WellKnownTypes.getDescriptor(),
+            configBuilder().setTimestampUnit(TimeUnit.NANOSECOND),
+            minTimestamp)) {
+      assertEquals(Long.MIN_VALUE, root.getVector("timestamp").getObject(0));
+    }
+    WellKnownTypes beforeMinTimestamp =
+        WellKnownTypes.newBuilder()
+            .setTimestamp(Timestamp.newBuilder().setSeconds(-9223372037L).setNanos(145_224_191))
+            .build();
+    e =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                convert(
+                    WellKnownTypes.getDescriptor(),
+                    configBuilder().setTimestampUnit(TimeUnit.NANOSECOND),
+                    beforeMinTimestamp));
+    assertEquals(
+        "Timestamp of -9223372037 seconds is out of range for unit NANOSECOND", e.getMessage());
+
+    for (Timestamp invalid :
+        List.of(
+            Timestamp.newBuilder().setSeconds(253402300800L).build(),
+            Timestamp.newBuilder().setNanos(-1).build())) {
+      WellKnownTypes invalidMessage = WellKnownTypes.newBuilder().setTimestamp(invalid).build();
+      e =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> convert(WellKnownTypes.getDescriptor(), invalidMessage));
+      assertEquals(
+          "Invalid google.protobuf.Timestamp with "
+              + invalid.getSeconds()
+              + " seconds and "
+              + invalid.getNanos()
+              + " nanos",
+          e.getMessage());
+    }
+  }
+
+  @Test
+  public void testJsonTypes() {
+    Struct struct =
+        Struct.newBuilder()
+            .putFields("a", numberValue(1))
+            .putFields(
+                "b",
+                Value.newBuilder()
+                    .setListValue(
+                        ListValue.newBuilder()
+                            .addValues(Value.newBuilder().setBoolValue(true))
+                            .addValues(Value.newBuilder().setNullValueValue(0))
+                            .addValues(Value.newBuilder().setStringValue("x\"\n")))
+                    .build())
+            .putFields(
+                "c",
+                Value.newBuilder()
+                    .setStructValue(Struct.newBuilder().putFields("d", numberValue(1.5)))
+                    .build())
+            .build();
+    WellKnownTypes message =
+        WellKnownTypes.newBuilder()
+            .setStruct(struct)
+            .setValue(numberValue(-0.0))
+            .setListValue(
+                ListValue.newBuilder().addValues(numberValue(1e300)).addValues(Value.newBuilder()))
+            .putValues("k", Value.newBuilder().setBoolValue(false).build())
+            .build();
+
+    try (VectorSchemaRoot root =
+        convert(WellKnownTypes.getDescriptor(), message, WellKnownTypes.getDefaultInstance())) {
+      assertEquals(
+          new Text("{\"a\":1.0,\"b\":[true,null,\"x\\\"\\n\"],\"c\":{\"d\":1.5}}"),
+          root.getVector("struct").getObject(0));
+      assertEquals(new Text("-0.0"), root.getVector("value").getObject(0));
+      // A value without a kind is printed as null
+      assertEquals(new Text("[1.0E300,null]"), root.getVector("list_value").getObject(0));
+      assertEquals(
+          List.of(Map.of("key", new Text("k"), "value", new Text("false"))),
+          root.getVector("values").getObject(0));
+      for (String name : List.of("struct", "value", "list_value")) {
+        assertTrue(root.getVector(name).isNull(1), name);
+      }
+    }
+
+    WellKnownTypes notANumber =
+        WellKnownTypes.newBuilder().setValue(numberValue(Double.NaN)).build();
+    assertThrows(
+        IllegalArgumentException.class, () -> convert(WellKnownTypes.getDescriptor(), notANumber));
+
+    // Values are limited to the depth that can be parsed back
+    WellKnownTypes maxDepth = WellKnownTypes.newBuilder().setValue(nestedListValue(100)).build();
+    convert(WellKnownTypes.getDescriptor(), maxDepth).close();
+    WellKnownTypes deep = WellKnownTypes.newBuilder().setValue(nestedListValue(100_000)).build();
+    IllegalArgumentException e =
+        assertThrows(
+            IllegalArgumentException.class, () -> convert(WellKnownTypes.getDescriptor(), deep));
+    assertEquals("JSON value is nested more than 100 levels deep", e.getMessage());
+  }
+
+  @Test
   public void testDynamicMessages() throws Exception {
     Containers containers =
         Containers.newBuilder()
@@ -415,8 +576,13 @@ public class ProtobufToArrowTest {
             .putItemsById(1, Item.newBuilder().setQuantity(2).build())
             .build();
     Presence presence = Presence.newBuilder().setItem(Item.getDefaultInstance()).build();
+    WellKnownTypes wellKnownTypes =
+        WellKnownTypes.newBuilder()
+            .setTimestamp(Timestamp.newBuilder().setSeconds(1))
+            .setStruct(Struct.newBuilder().putFields("a", numberValue(1)))
+            .build();
 
-    for (Message message : List.of(containers, presence)) {
+    for (Message message : List.of(containers, presence, wellKnownTypes)) {
       Descriptor descriptor = message.getDescriptorForType();
       DynamicMessage dynamicMessage = DynamicMessage.parseFrom(descriptor, message.toByteString());
       try (VectorSchemaRoot expected = convert(descriptor, message);

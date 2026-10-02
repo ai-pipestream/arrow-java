@@ -32,6 +32,7 @@ import org.apache.arrow.adapter.protobuf.TestProtos.Presence;
 import org.apache.arrow.adapter.protobuf.TestProtos.Scalars;
 import org.apache.arrow.adapter.protobuf.TestProtos.WellKnownTypes;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
+import org.apache.arrow.vector.types.TimeUnit;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
@@ -244,14 +245,28 @@ public class ProtobufToArrowSchemaTest {
   }
 
   @Test
-  public void testUnsupportedWellKnownTypes() {
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class, () -> convert(WellKnownTypes.getDescriptor()));
+  public void testWellKnownTypes() {
+    ArrowType timestamp = new ArrowType.Timestamp(TimeUnit.MICROSECOND, "UTC");
+    List<Field> expected =
+        Arrays.asList(
+            field("timestamp", true, timestamp),
+            field("struct", true, ArrowType.Utf8.INSTANCE),
+            field("value", true, ArrowType.Utf8.INSTANCE),
+            field("list_value", true, ArrowType.Utf8.INSTANCE),
+            list("timestamps", field("$data$", false, timestamp)),
+            map(
+                "values",
+                field("key", false, ArrowType.Utf8.INSTANCE),
+                field("value", false, ArrowType.Utf8.INSTANCE)));
+    assertEquals(expected, convert(WellKnownTypes.getDescriptor()).getFields());
+
+    Schema nanoSchema =
+        convert(
+            WellKnownTypes.getDescriptor(),
+            new ProtobufToArrowConfigBuilder().setTimestampUnit(TimeUnit.NANOSECOND));
     assertEquals(
-        "Unsupported type google.protobuf.Timestamp of field"
-            + " arrow.adapter.protobuf.WellKnownTypes.timestamp",
-        e.getMessage());
+        new ArrowType.Timestamp(TimeUnit.NANOSECOND, "UTC"),
+        nanoSchema.findField("timestamp").getType());
   }
 
   @Test

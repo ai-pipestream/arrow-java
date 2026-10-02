@@ -51,6 +51,7 @@ order. The mapping of some types can be customized:
    ProtobufToArrowConfig config = new ProtobufToArrowConfigBuilder()
        .setEnumMapping(ProtobufToArrowConfig.EnumMapping.NAME)
        .setUnsignedAsSigned(true)
+       .setTimestampUnit(TimeUnit.NANOSECOND)
        .build();
 
 Type Mapping
@@ -85,6 +86,14 @@ Type Mapping
 +---------------------------+------------------------+-------+
 | map                       | Map                    |       |
 +---------------------------+------------------------+-------+
+| google.protobuf.Timestamp | Timestamp[us, UTC]     | \(4)  |
++---------------------------+------------------------+-------+
+| google.protobuf.Struct    | Utf8                   | \(5)  |
++---------------------------+------------------------+-------+
+| google.protobuf.Value     | Utf8                   | \(5)  |
++---------------------------+------------------------+-------+
+| google.protobuf.ListValue | Utf8                   | \(5)  |
++---------------------------+------------------------+-------+
 
 * \(1) If ``setUnsignedAsSigned(true)`` is used, these map to Int64
   instead, for consumers that do not support unsigned integers. 32-bit
@@ -94,9 +103,17 @@ Type Mapping
   declaration order. Fields with the same enum type share a dictionary.
   ``EnumMapping.NAME`` maps enums to the value name as Utf8 instead, and
   ``EnumMapping.NUMBER`` to the value number as Int32.
-* \(3) Recursive message types cannot be converted, and neither can
-  the well-known types google.protobuf.Timestamp, Struct, Value and
-  ListValue.
+* \(3) Recursive message types cannot be converted, except for the
+  well-known types below.
+* \(4) The unit can be changed with ``setTimestampUnit``. Microseconds
+  cover the full range of protobuf timestamps, nanoseconds only cover
+  the years 1677 to 2262. Values are rounded down to the unit.
+* \(5) These recursive types are represented as their proto3 JSON, as
+  printed by ``JsonFormat`` from protobuf-java-util without whitespace.
+  ``JsonFormat`` escapes the characters ``<``, ``>``, ``&``, ``=`` and
+  ``'`` in strings, for example as ``\u003c``. Values nested more than
+  100 levels deep, and numbers that are NaN or infinite, cannot be
+  converted.
 
 A singular field is nullable if it tracks presence, as reported by
 ``FieldDescriptor.hasPresence()``: message fields, oneof members, proto2

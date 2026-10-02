@@ -23,4 +23,7 @@ module org.apache.arrow.adapter.protobuf {
   requires transitive com.google.protobuf;
   requires transitive org.apache.arrow.memory.core;
   requires transitive org.apache.arrow.vector;
+  // JsonFormat needs Gson, but protobuf-java-util is an automatic module that cannot require it
+  requires com.google.gson;
+  requires com.google.protobuf.util;
 }

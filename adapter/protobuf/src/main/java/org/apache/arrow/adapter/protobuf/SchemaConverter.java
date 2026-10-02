@@ -30,7 +30,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -50,14 +49,6 @@ import org.apache.arrow.vector.types.pojo.Schema;
  * fields that are not in the dictionary provider yet.
  */
 final class SchemaConverter {
-
-  // Well-known types that are not converted like other messages
-  private static final Set<String> UNSUPPORTED_MESSAGE_TYPES =
-      Set.of(
-          "google.protobuf.Timestamp",
-          "google.protobuf.Struct",
-          "google.protobuf.Value",
-          "google.protobuf.ListValue");
 
   // Not sized to the enum, so that adding enum values does not change the schema
   private static final ArrowType.Int DICTIONARY_INDEX_TYPE =
@@ -210,15 +201,15 @@ final class SchemaConverter {
         }
         break;
       case MESSAGE:
-        if (UNSUPPORTED_MESSAGE_TYPES.contains(field.getMessageType().getFullName())) {
-          throw new UnsupportedOperationException(
-              "Unsupported type "
-                  + field.getMessageType().getFullName()
-                  + " of field "
-                  + field.getFullName());
+        Descriptor messageType = field.getMessageType();
+        if (WellKnownTypeUtils.isTimestamp(messageType)) {
+          arrowType = new ArrowType.Timestamp(config.getTimestampUnit(), "UTC");
+        } else if (WellKnownTypeUtils.isJson(messageType)) {
+          arrowType = ArrowType.Utf8.INSTANCE;
+        } else {
+          arrowType = ArrowType.Struct.INSTANCE;
+          children = convertFields(messageType);
         }
-        arrowType = ArrowType.Struct.INSTANCE;
-        children = convertFields(field.getMessageType());
         break;
       default:
         throw new UnsupportedOperationException(

@@ -19,6 +19,7 @@ package org.apache.arrow.adapter.protobuf;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.util.Preconditions;
 import org.apache.arrow.vector.dictionary.DictionaryProvider;
+import org.apache.arrow.vector.types.TimeUnit;
 
 /**
  * This class configures the Protobuf-to-Arrow conversion process.
@@ -62,19 +63,23 @@ public final class ProtobufToArrowConfig {
 
   private final boolean unsignedAsSigned;
 
+  private final TimeUnit timestampUnit;
+
   ProtobufToArrowConfig(
       BufferAllocator allocator,
       int targetBatchSize,
       DictionaryProvider.MapDictionaryProvider provider,
       EnumMapping enumMapping,
       UnknownEnumValues unknownEnumValues,
-      boolean unsignedAsSigned) {
+      boolean unsignedAsSigned,
+      TimeUnit timestampUnit) {
     Preconditions.checkArgument(
         targetBatchSize == ProtobufToArrowVectorIterator.NO_LIMIT_BATCH_SIZE || targetBatchSize > 0,
         "invalid targetBatchSize: %s",
         targetBatchSize);
     Preconditions.checkNotNull(enumMapping, "enumMapping cannot be null");
     Preconditions.checkNotNull(unknownEnumValues, "unknownEnumValues cannot be null");
+    Preconditions.checkNotNull(timestampUnit, "timestampUnit cannot be null");
 
     this.allocator = allocator;
     this.targetBatchSize = targetBatchSize;
@@ -82,6 +87,7 @@ public final class ProtobufToArrowConfig {
     this.enumMapping = enumMapping;
     this.unknownEnumValues = unknownEnumValues;
     this.unsignedAsSigned = unsignedAsSigned;
+    this.timestampUnit = timestampUnit;
   }
 
   /**
@@ -137,5 +143,14 @@ public final class ProtobufToArrowConfig {
    */
   public boolean isUnsignedAsSigned() {
     return unsignedAsSigned;
+  }
+
+  /**
+   * Returns the unit of the timestamps that google.protobuf.Timestamp fields are mapped to.
+   *
+   * @return the unit of the timestamps that google.protobuf.Timestamp fields are mapped to
+   */
+  public TimeUnit getTimestampUnit() {
+    return timestampUnit;
   }
 }

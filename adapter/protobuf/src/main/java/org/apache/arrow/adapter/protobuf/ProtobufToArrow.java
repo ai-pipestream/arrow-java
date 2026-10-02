@@ -49,6 +49,8 @@ public final class ProtobufToArrow {
    *     <tr><td>message, group</td><td>Struct</td></tr>
    *     <tr><td>repeated</td><td>List</td></tr>
    *     <tr><td>map</td><td>Map</td></tr>
+   *     <tr><td>google.protobuf.Timestamp</td><td>Timestamp(unit, "UTC")</td></tr>
+   *     <tr><td>google.protobuf.Struct, Value, ListValue</td><td>Utf8 (JSON)</td></tr>
    *   </tbody>
    * </table>
    *
@@ -64,8 +66,7 @@ public final class ProtobufToArrow {
    * can add dictionaries to the provider of the config and change these ids, so with a shared
    * provider, use the schema of the batches instead.
    *
-   * <p>Recursive message types cannot be converted, and neither can fields of the well-known types
-   * google.protobuf.Timestamp, Struct, Value and ListValue.
+   * <p>Recursive message types cannot be converted, except for the JSON types above.
    *
    * @param descriptor The protobuf message descriptor to convert
    * @param config Configuration options for conversion
