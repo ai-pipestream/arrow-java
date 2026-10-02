@@ -25,6 +25,26 @@ import "google/protobuf/timestamp.proto";
 option java_package = "org.apache.arrow.adapter.protobuf";
 option java_outer_classname = "TestProtos";
 
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
+  GREEN = 2;
+}
+
+enum Shape {
+  SHAPE_UNSPECIFIED = 0;
+  CIRCLE = 1;
+  SQUARE = 2;
+}
+
+enum Size {
+  option allow_alias = true;
+  SIZE_UNSPECIFIED = 0;
+  SMALL = 1;
+  LARGE = 2;
+  BIG = 2;
+}
+
 message Scalars {
   bool bool_field = 1;
   int32 int32_field = 2;
@@ -65,6 +85,19 @@ message Containers {
   map<int32, Item> items_by_id = 4;
   map<bool, double> flags = 5;
   map<uint64, bytes> blobs = 6;
+}
+
+message Enums {
+  Color color = 1;
+  Shape shape = 2;
+  repeated Color colors = 3;
+  map<string, Color> colors_by_name = 4;
+  optional Color optional_color = 5;
+}
+
+message Drawing {
+  Shape shape = 1;
+  Size size = 2;
 }
 
 message WellKnownTypes {

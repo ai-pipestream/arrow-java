@@ -22,6 +22,11 @@ package arrow.adapter.protobuf;
 option java_package = "org.apache.arrow.adapter.protobuf";
 option java_outer_classname = "TestProto2Protos";
 
+enum Level {
+  LOW = 0;
+  HIGH = 1;
+}
+
 message Proto2Message {
   required string required_field = 1;
   optional int32 optional_field = 2 [default = 7];
@@ -30,4 +35,6 @@ message Proto2Message {
     optional int32 x = 5;
     repeated int32 y = 6;
   }
+  optional Level level = 7;
+  repeated Level levels = 8;
 }

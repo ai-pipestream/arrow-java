@@ -18,24 +18,69 @@ package org.apache.arrow.adapter.protobuf;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.util.Preconditions;
+import org.apache.arrow.vector.dictionary.DictionaryProvider;
 
-/** This class configures the Protobuf-to-Arrow conversion process. */
+/**
+ * This class configures the Protobuf-to-Arrow conversion process.
+ *
+ * <p>A config must not be used by several threads at once, since creating an iterator can add
+ * dictionaries to its provider.
+ */
 public final class ProtobufToArrowConfig {
+
+  /** The Arrow representation of protobuf enum fields. */
+  public enum EnumMapping {
+    /** Int32 indexes into a dictionary of the enum value names. */
+    DICTIONARY,
+    /** The enum value name, as Utf8. */
+    NAME,
+    /** The enum value number, as Int32. */
+    NUMBER
+  }
+
+  /**
+   * The conversion of values of open enums that are not defined in the enum type, which messages
+   * can hold when they were written with a newer version of the enum. Only {@link
+   * EnumMapping#NUMBER} can represent these values, so this does not apply to it.
+   */
+  public enum UnknownEnumValues {
+    /** Converting a message with an unknown enum value fails. */
+    FAIL,
+    /** Unknown enum values are converted to null, so fields of open enum types are nullable. */
+    NULL
+  }
 
   private final BufferAllocator allocator;
 
   private final int targetBatchSize;
 
+  private final DictionaryProvider.MapDictionaryProvider provider;
+
+  private final EnumMapping enumMapping;
+
+  private final UnknownEnumValues unknownEnumValues;
+
   private final boolean unsignedAsSigned;
 
-  ProtobufToArrowConfig(BufferAllocator allocator, int targetBatchSize, boolean unsignedAsSigned) {
+  ProtobufToArrowConfig(
+      BufferAllocator allocator,
+      int targetBatchSize,
+      DictionaryProvider.MapDictionaryProvider provider,
+      EnumMapping enumMapping,
+      UnknownEnumValues unknownEnumValues,
+      boolean unsignedAsSigned) {
     Preconditions.checkArgument(
         targetBatchSize == ProtobufToArrowVectorIterator.NO_LIMIT_BATCH_SIZE || targetBatchSize > 0,
         "invalid targetBatchSize: %s",
         targetBatchSize);
+    Preconditions.checkNotNull(enumMapping, "enumMapping cannot be null");
+    Preconditions.checkNotNull(unknownEnumValues, "unknownEnumValues cannot be null");
 
     this.allocator = allocator;
     this.targetBatchSize = targetBatchSize;
+    this.provider = provider;
+    this.enumMapping = enumMapping;
+    this.unknownEnumValues = unknownEnumValues;
     this.unsignedAsSigned = unsignedAsSigned;
   }
 
@@ -56,6 +101,33 @@ public final class ProtobufToArrowConfig {
    */
   public int getTargetBatchSize() {
     return targetBatchSize;
+  }
+
+  /**
+   * Returns the provider that the dictionaries of enum fields are added to.
+   *
+   * @return the provider, or null if each iterator creates its own provider
+   */
+  public DictionaryProvider.MapDictionaryProvider getProvider() {
+    return provider;
+  }
+
+  /**
+   * Returns the Arrow representation of enum fields.
+   *
+   * @return the Arrow representation of enum fields
+   */
+  public EnumMapping getEnumMapping() {
+    return enumMapping;
+  }
+
+  /**
+   * Returns the conversion of enum values that are not defined in the enum type.
+   *
+   * @return the conversion of enum values that are not defined in the enum type
+   */
+  public UnknownEnumValues getUnknownEnumValues() {
+    return unknownEnumValues;
   }
 
   /**

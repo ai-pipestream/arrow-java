@@ -18,6 +18,8 @@ package org.apache.arrow.adapter.protobuf;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.EnumDescriptor;
+import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Message;
 import java.nio.charset.StandardCharsets;
@@ -184,6 +186,8 @@ final class MessageConsumer {
       case BYTE_STRING:
         VarBinaryVector bytesVector = (VarBinaryVector) vector;
         return (index, value) -> bytesVector.setSafe(index, ((ByteString) value).toByteArray());
+      case ENUM:
+        return createEnumConsumer(field, vector, config);
       case MESSAGE:
         StructVector structVector = (StructVector) vector;
         MessageConsumer fieldsConsumer =
@@ -194,5 +198,53 @@ final class MessageConsumer {
         throw new UnsupportedOperationException(
             "Unsupported type " + field.getType() + " of field " + field.getFullName());
     }
+  }
+
+  private static ValueConsumer createEnumConsumer(
+      FieldDescriptor field, FieldVector vector, ProtobufToArrowConfig config) {
+    EnumDescriptor enumType = field.getEnumType();
+    final ValueConsumer knownValueConsumer;
+    switch (config.getEnumMapping()) {
+      case DICTIONARY:
+        IntVector indexVector = (IntVector) vector;
+        knownValueConsumer =
+            (index, value) -> indexVector.setSafe(index, ((EnumValueDescriptor) value).getIndex());
+        break;
+      case NAME:
+        VarCharVector nameVector = (VarCharVector) vector;
+        byte[][] names = new byte[enumType.getValues().size()][];
+        for (EnumValueDescriptor enumValue : enumType.getValues()) {
+          names[enumValue.getIndex()] = enumValue.getName().getBytes(StandardCharsets.UTF_8);
+        }
+        knownValueConsumer =
+            (index, value) ->
+                nameVector.setSafe(index, names[((EnumValueDescriptor) value).getIndex()]);
+        break;
+      case NUMBER:
+        // Numbers can represent unknown values
+        IntVector numberVector = (IntVector) vector;
+        return (index, value) ->
+            numberVector.setSafe(index, ((EnumValueDescriptor) value).getNumber());
+      default:
+        throw new UnsupportedOperationException(
+            "Unsupported enum mapping: " + config.getEnumMapping());
+    }
+    boolean unknownAsNull = SchemaConverter.isUnknownEnumNull(field, config);
+    return (index, value) -> {
+      EnumValueDescriptor enumValue = (EnumValueDescriptor) value;
+      if (enumValue.getIndex() >= 0) {
+        knownValueConsumer.consume(index, enumValue);
+      } else if (unknownAsNull) {
+        vector.setNull(index);
+      } else {
+        throw new IllegalArgumentException(
+            "Enum value "
+                + enumValue.getNumber()
+                + " of field "
+                + field.getFullName()
+                + " is not defined in "
+                + enumType.getFullName());
+      }
+    };
   }
 }

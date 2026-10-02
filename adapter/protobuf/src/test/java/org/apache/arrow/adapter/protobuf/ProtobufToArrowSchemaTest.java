@@ -25,6 +25,7 @@ import java.util.List;
 import org.apache.arrow.adapter.protobuf.TestEditionsProtos.EditionsMessage;
 import org.apache.arrow.adapter.protobuf.TestProto2Protos.Proto2Message;
 import org.apache.arrow.adapter.protobuf.TestProtos.Containers;
+import org.apache.arrow.adapter.protobuf.TestProtos.Enums;
 import org.apache.arrow.adapter.protobuf.TestProtos.Envelope;
 import org.apache.arrow.adapter.protobuf.TestProtos.Node;
 import org.apache.arrow.adapter.protobuf.TestProtos.Presence;
@@ -32,6 +33,7 @@ import org.apache.arrow.adapter.protobuf.TestProtos.Scalars;
 import org.apache.arrow.adapter.protobuf.TestProtos.WellKnownTypes;
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
@@ -56,6 +58,11 @@ public class ProtobufToArrowSchemaTest {
 
   private static Field field(String name, boolean nullable, ArrowType type, Field... children) {
     return new Field(name, new FieldType(nullable, type, null), Arrays.asList(children));
+  }
+
+  private static Field dictionaryField(String name, boolean nullable, long dictionaryId) {
+    DictionaryEncoding encoding = new DictionaryEncoding(dictionaryId, false, INT32);
+    return new Field(name, new FieldType(nullable, INT32, encoding), null);
   }
 
   private static Field list(String name, Field element) {
@@ -137,7 +144,9 @@ public class ProtobufToArrowSchemaTest {
                 true,
                 ArrowType.Struct.INSTANCE,
                 field("x", true, INT32),
-                list("y", field("$data$", false, INT32))));
+                list("y", field("$data$", false, INT32))),
+            dictionaryField("level", true, 0),
+            list("levels", dictionaryField("$data$", false, 0)));
     assertEquals(expectedProto2, convert(Proto2Message.getDescriptor()).getFields());
 
     List<Field> expectedEditions =
@@ -171,6 +180,67 @@ public class ProtobufToArrowSchemaTest {
                 field("value", false, ArrowType.Binary.INSTANCE)));
 
     assertEquals(expected, convert(Containers.getDescriptor()).getFields());
+  }
+
+  @Test
+  public void testEnumMappings() {
+    // Fields of the same enum type share a dictionary
+    List<Field> expected =
+        Arrays.asList(
+            dictionaryField("color", false, 0),
+            dictionaryField("shape", false, 1),
+            list("colors", dictionaryField("$data$", false, 0)),
+            map(
+                "colors_by_name",
+                field("key", false, ArrowType.Utf8.INSTANCE),
+                dictionaryField("value", false, 0)),
+            dictionaryField("optional_color", true, 0));
+    assertEquals(expected, convert(Enums.getDescriptor()).getFields());
+
+    Schema nameSchema =
+        convert(
+            Enums.getDescriptor(),
+            new ProtobufToArrowConfigBuilder()
+                .setEnumMapping(ProtobufToArrowConfig.EnumMapping.NAME));
+    assertEquals(field("color", false, ArrowType.Utf8.INSTANCE), nameSchema.findField("color"));
+
+    Schema numberSchema =
+        convert(
+            Enums.getDescriptor(),
+            new ProtobufToArrowConfigBuilder()
+                .setEnumMapping(ProtobufToArrowConfig.EnumMapping.NUMBER));
+    assertEquals(field("color", false, INT32), numberSchema.findField("color"));
+  }
+
+  @Test
+  public void testUnknownEnumValuesAsNull() {
+    ProtobufToArrowConfigBuilder builder =
+        new ProtobufToArrowConfigBuilder()
+            .setUnknownEnumValues(ProtobufToArrowConfig.UnknownEnumValues.NULL);
+
+    // Values of open enums can be null, even in lists and maps
+    List<Field> expected =
+        Arrays.asList(
+            dictionaryField("color", true, 0),
+            dictionaryField("shape", true, 1),
+            list("colors", dictionaryField("$data$", true, 0)),
+            map(
+                "colors_by_name",
+                field("key", false, ArrowType.Utf8.INSTANCE),
+                dictionaryField("value", true, 0)),
+            dictionaryField("optional_color", true, 0));
+    assertEquals(expected, convert(Enums.getDescriptor(), builder).getFields());
+
+    // Closed enums and numbers do not have unknown values
+    assertEquals(
+        list("levels", dictionaryField("$data$", false, 0)),
+        convert(Proto2Message.getDescriptor(), builder).findField("levels"));
+    assertEquals(
+        field("color", false, INT32),
+        convert(
+                Enums.getDescriptor(),
+                builder.setEnumMapping(ProtobufToArrowConfig.EnumMapping.NUMBER))
+            .findField("color"));
   }
 
   @Test

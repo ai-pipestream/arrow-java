@@ -17,6 +17,7 @@
 package org.apache.arrow.adapter.protobuf;
 
 import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.vector.dictionary.DictionaryProvider;
 
 /** This class builds {@link ProtobufToArrowConfig}s. */
 public final class ProtobufToArrowConfigBuilder {
@@ -24,6 +25,12 @@ public final class ProtobufToArrowConfigBuilder {
   private final BufferAllocator allocator;
 
   private int targetBatchSize;
+
+  private DictionaryProvider.MapDictionaryProvider provider;
+
+  private ProtobufToArrowConfig.EnumMapping enumMapping;
+
+  private ProtobufToArrowConfig.UnknownEnumValues unknownEnumValues;
 
   private boolean unsignedAsSigned;
 
@@ -43,6 +50,9 @@ public final class ProtobufToArrowConfigBuilder {
   public ProtobufToArrowConfigBuilder(BufferAllocator allocator) {
     this.allocator = allocator;
     this.targetBatchSize = ProtobufToArrowVectorIterator.DEFAULT_BATCH_SIZE;
+    this.provider = null;
+    this.enumMapping = ProtobufToArrowConfig.EnumMapping.DICTIONARY;
+    this.unknownEnumValues = ProtobufToArrowConfig.UnknownEnumValues.FAIL;
     this.unsignedAsSigned = false;
   }
 
@@ -56,6 +66,51 @@ public final class ProtobufToArrowConfigBuilder {
    */
   public ProtobufToArrowConfigBuilder setTargetBatchSize(int targetBatchSize) {
     this.targetBatchSize = targetBatchSize;
+    return this;
+  }
+
+  /**
+   * Sets the provider that the dictionaries of enum fields are added to. The caller owns the
+   * provider, and must close it after the batches that use its dictionaries. A dictionary already
+   * in the provider is reused if it was created for the same enum type and holds the same values;
+   * other dictionaries are added with ids that the provider does not use yet, so a provider can be
+   * shared by conversions of different message types.
+   *
+   * <p>The default is null, in which case each iterator creates its own provider, see {@link
+   * ProtobufToArrowVectorIterator#getDictionaryProvider()}.
+   *
+   * @param provider the provider, or null
+   * @return this builder
+   */
+  public ProtobufToArrowConfigBuilder setProvider(
+      DictionaryProvider.MapDictionaryProvider provider) {
+    this.provider = provider;
+    return this;
+  }
+
+  /**
+   * Sets the Arrow representation of enum fields. The default is {@link
+   * ProtobufToArrowConfig.EnumMapping#DICTIONARY}.
+   *
+   * @param enumMapping the Arrow representation of enum fields
+   * @return this builder
+   */
+  public ProtobufToArrowConfigBuilder setEnumMapping(
+      ProtobufToArrowConfig.EnumMapping enumMapping) {
+    this.enumMapping = enumMapping;
+    return this;
+  }
+
+  /**
+   * Sets the conversion of values of open enums that are not defined in the enum type. The default
+   * is {@link ProtobufToArrowConfig.UnknownEnumValues#FAIL}.
+   *
+   * @param unknownEnumValues the conversion of unknown enum values
+   * @return this builder
+   */
+  public ProtobufToArrowConfigBuilder setUnknownEnumValues(
+      ProtobufToArrowConfig.UnknownEnumValues unknownEnumValues) {
+    this.unknownEnumValues = unknownEnumValues;
     return this;
   }
 
@@ -79,6 +134,7 @@ public final class ProtobufToArrowConfigBuilder {
    * @return the config
    */
   public ProtobufToArrowConfig build() {
-    return new ProtobufToArrowConfig(allocator, targetBatchSize, unsignedAsSigned);
+    return new ProtobufToArrowConfig(
+        allocator, targetBatchSize, provider, enumMapping, unknownEnumValues, unsignedAsSigned);
   }
 }

@@ -34,19 +34,33 @@ import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.arrow.adapter.protobuf.TestEditionsProtos.EditionsMessage;
 import org.apache.arrow.adapter.protobuf.TestProto2Protos.Proto2Message;
+import org.apache.arrow.adapter.protobuf.TestProtos.Color;
 import org.apache.arrow.adapter.protobuf.TestProtos.Containers;
+import org.apache.arrow.adapter.protobuf.TestProtos.Drawing;
+import org.apache.arrow.adapter.protobuf.TestProtos.Enums;
 import org.apache.arrow.adapter.protobuf.TestProtos.Item;
 import org.apache.arrow.adapter.protobuf.TestProtos.Presence;
 import org.apache.arrow.adapter.protobuf.TestProtos.Scalars;
+import org.apache.arrow.adapter.protobuf.TestProtos.Shape;
+import org.apache.arrow.adapter.protobuf.TestProtos.Size;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.UInt4Vector;
 import org.apache.arrow.vector.UInt8Vector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
+import org.apache.arrow.vector.complex.StructVector;
+import org.apache.arrow.vector.dictionary.Dictionary;
+import org.apache.arrow.vector.dictionary.DictionaryProvider;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.DictionaryEncoding;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.arrow.vector.util.Text;
 import org.apache.arrow.vector.util.ValueVectorUtility;
 import org.junit.jupiter.api.AfterEach;
@@ -254,6 +268,142 @@ public class ProtobufToArrowTest {
       for (FieldVector vector : root.getFieldVectors()) {
         assertEquals(List.of(), vector.getObject(1), vector.getName());
       }
+    }
+  }
+
+  @Test
+  public void testEnums() {
+    Enums message =
+        Enums.newBuilder()
+            .setColor(Color.GREEN)
+            .setShape(Shape.CIRCLE)
+            .addColors(Color.RED)
+            .addColors(Color.GREEN)
+            .putColorsByName("r", Color.RED)
+            .build();
+    // Aliases have the index and name of the first value with their number
+    Drawing drawing = Drawing.newBuilder().setSize(Size.BIG).build();
+
+    try (VectorSchemaRoot root = convert(Enums.getDescriptor(), message)) {
+      assertEquals(2, root.getVector("color").getObject(0));
+      assertEquals(1, root.getVector("shape").getObject(0));
+      assertEquals(List.of(1, 2), root.getVector("colors").getObject(0));
+      assertEquals(
+          List.of(Map.of("key", new Text("r"), "value", 1)),
+          root.getVector("colors_by_name").getObject(0));
+      assertTrue(root.getVector("optional_color").isNull(0));
+    }
+    try (VectorSchemaRoot root = convert(Drawing.getDescriptor(), drawing)) {
+      assertEquals(Size.LARGE.getValueDescriptor().getIndex(), root.getVector("size").getObject(0));
+    }
+
+    ProtobufToArrowConfigBuilder nameBuilder =
+        configBuilder().setEnumMapping(ProtobufToArrowConfig.EnumMapping.NAME);
+    try (VectorSchemaRoot root = convert(Enums.getDescriptor(), nameBuilder, message)) {
+      assertEquals(new Text("GREEN"), root.getVector("color").getObject(0));
+      assertEquals(new Text("CIRCLE"), root.getVector("shape").getObject(0));
+      assertEquals(
+          List.of(new Text("RED"), new Text("GREEN")), root.getVector("colors").getObject(0));
+    }
+    try (VectorSchemaRoot root = convert(Drawing.getDescriptor(), nameBuilder, drawing)) {
+      assertEquals(new Text("LARGE"), root.getVector("size").getObject(0));
+    }
+
+    try (VectorSchemaRoot root =
+        convert(
+            Enums.getDescriptor(),
+            configBuilder().setEnumMapping(ProtobufToArrowConfig.EnumMapping.NUMBER),
+            message)) {
+      assertEquals(Color.GREEN_VALUE, root.getVector("color").getObject(0));
+      assertEquals(List.of(1, 2), root.getVector("colors").getObject(0));
+    }
+  }
+
+  @Test
+  public void testUnknownEnumValues() {
+    Enums message =
+        Enums.newBuilder().setColorValue(7).addColorsValue(8).putColorsByNameValue("x", 9).build();
+
+    IllegalArgumentException e =
+        assertThrows(IllegalArgumentException.class, () -> convert(Enums.getDescriptor(), message));
+    assertEquals(
+        "Enum value 7 of field arrow.adapter.protobuf.Enums.color is not defined in"
+            + " arrow.adapter.protobuf.Color",
+        e.getMessage());
+
+    for (ProtobufToArrowConfig.EnumMapping mapping :
+        List.of(
+            ProtobufToArrowConfig.EnumMapping.DICTIONARY, ProtobufToArrowConfig.EnumMapping.NAME)) {
+      try (VectorSchemaRoot root =
+          convert(
+              Enums.getDescriptor(),
+              configBuilder()
+                  .setEnumMapping(mapping)
+                  .setUnknownEnumValues(ProtobufToArrowConfig.UnknownEnumValues.NULL),
+              message)) {
+        assertTrue(root.getVector("color").isNull(0));
+        assertTrue(((ListVector) root.getVector("colors")).getDataVector().isNull(0));
+        MapVector colorsByName = (MapVector) root.getVector("colors_by_name");
+        assertTrue(((StructVector) colorsByName.getDataVector()).getChild("value").isNull(0));
+      }
+    }
+
+    // Numbers can represent unknown values
+    try (VectorSchemaRoot root =
+        convert(
+            Enums.getDescriptor(),
+            configBuilder().setEnumMapping(ProtobufToArrowConfig.EnumMapping.NUMBER),
+            message)) {
+      assertEquals(7, root.getVector("color").getObject(0));
+      assertEquals(List.of(8), root.getVector("colors").getObject(0));
+      assertEquals(
+          List.of(Map.of("key", new Text("x"), "value", 9)),
+          root.getVector("colors_by_name").getObject(0));
+    }
+  }
+
+  @Test
+  public void testDictionaries() {
+    // Without a provider in the config, the iterator owns the dictionaries
+    ProtobufToArrowVectorIterator owner =
+        ProtobufToArrow.protobufToArrowIterator(
+            Enums.getDescriptor(), List.<Enums>of().iterator(), configBuilder().build());
+    try (owner) {
+      DictionaryProvider provider = owner.getDictionaryProvider();
+      assertEquals(Set.of(0L, 1L), provider.getDictionaryIds());
+      assertEquals(
+          List.of(new Text("COLOR_UNSPECIFIED"), new Text("RED"), new Text("GREEN")),
+          getValues(provider.lookup(0).getVector()));
+      // The dictionaries are sized to the names, not to the default capacity of vectors
+      assertTrue(allocator.getAllocatedMemory() < 1024);
+    }
+    assertEquals(0, allocator.getAllocatedMemory());
+    assertThrows(IllegalStateException.class, owner::getDictionaryProvider);
+
+    // A provider in the config can be shared by several message types
+    try (DictionaryProvider.MapDictionaryProvider provider =
+        new DictionaryProvider.MapDictionaryProvider()) {
+      provider.put(
+          new Dictionary(
+              new VarCharVector("other", allocator),
+              new DictionaryEncoding(0, false, new ArrowType.Int(32, true))));
+      ProtobufToArrowConfig config = configBuilder().setProvider(provider).build();
+      for (Descriptor descriptor : List.of(Enums.getDescriptor(), Drawing.getDescriptor())) {
+        ProtobufToArrow.protobufToArrowIterator(descriptor, List.<Message>of().iterator(), config)
+            .close();
+      }
+
+      Schema enumsSchema = ProtobufToArrow.protobufToArrowSchema(Enums.getDescriptor(), config);
+      Schema drawingSchema = ProtobufToArrow.protobufToArrowSchema(Drawing.getDescriptor(), config);
+      assertEquals(1, enumsSchema.findField("color").getDictionary().getId());
+      assertEquals(2, enumsSchema.findField("shape").getDictionary().getId());
+      assertEquals(2, drawingSchema.findField("shape").getDictionary().getId());
+      assertEquals(3, drawingSchema.findField("size").getDictionary().getId());
+      assertEquals(Set.of(0L, 1L, 2L, 3L), provider.getDictionaryIds());
+      assertEquals(
+          List.of(
+              new Text("SIZE_UNSPECIFIED"), new Text("SMALL"), new Text("LARGE"), new Text("BIG")),
+          getValues(provider.lookup(3).getVector()));
     }
   }
 

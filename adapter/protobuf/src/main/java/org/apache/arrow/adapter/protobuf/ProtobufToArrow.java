@@ -45,6 +45,7 @@ public final class ProtobufToArrow {
    *     <tr><td>double</td><td>FloatingPoint(DOUBLE)</td></tr>
    *     <tr><td>string</td><td>Utf8</td></tr>
    *     <tr><td>bytes</td><td>Binary</td></tr>
+   *     <tr><td>enum</td><td>Dictionary-encoded Int(32, signed), Utf8 or Int(32, signed)</td></tr>
    *     <tr><td>message, group</td><td>Struct</td></tr>
    *     <tr><td>repeated</td><td>List</td></tr>
    *     <tr><td>map</td><td>Map</td></tr>
@@ -56,7 +57,12 @@ public final class ProtobufToArrow {
    * proto2 optional and required fields, proto3 {@code optional} fields, and fields with explicit
    * presence in editions. Other fields always have a value, since protobuf does not distinguish an
    * unset field from its default value. Lists, list elements, maps, map keys and map values are
-   * never null.
+   * never null, except for open enum values if unknown enum values are converted to null.
+   *
+   * <p>If enums are mapped to dictionaries, enum fields have the ids of the dictionaries that an
+   * iterator created now with the same config would use. Creating iterators for other message types
+   * can add dictionaries to the provider of the config and change these ids, so with a shared
+   * provider, use the schema of the batches instead.
    *
    * <p>Recursive message types cannot be converted, and neither can fields of the well-known types
    * google.protobuf.Timestamp, Struct, Value and ListValue.
@@ -70,12 +76,14 @@ public final class ProtobufToArrow {
     Preconditions.checkNotNull(descriptor, "Protobuf descriptor cannot be null");
     Preconditions.checkNotNull(config, "config cannot be null");
 
-    return new SchemaConverter(config).convert(descriptor);
+    return new SchemaConverter(config, config.getProvider()).convert(descriptor);
   }
 
   /**
    * Convert protobuf messages to Arrow vectors in batches, with the schema returned by {@link
-   * #protobufToArrowSchema}. Fields that track presence and are not set are null.
+   * #protobufToArrowSchema}. Fields that track presence and are not set are null. If enums are
+   * mapped to dictionaries, the dictionaries are added to the provider of the config, or to a
+   * provider that the iterator creates and closes if the config has none.
    *
    * <p>The messages can be generated messages or {@link com.google.protobuf.DynamicMessage}s, but
    * their descriptor must be the given descriptor instance. Messages of the same type whose

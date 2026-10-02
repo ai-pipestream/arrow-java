@@ -31,6 +31,8 @@ The adapter is experimental. The well-known types
 messages. Later versions may map them to dedicated Arrow types instead,
 which would change the schema of their fields.
 
+The adapter requires protobuf-java 3.25 or later.
+
 Descriptor to Schema Conversion
 ===============================
 
@@ -42,7 +44,14 @@ This can be accessed via the ProtobufToArrow class:
    Schema schema = ProtobufToArrow.protobufToArrowSchema(MyMessage.getDescriptor(), config);
 
 Each field of the message becomes a field of the schema, in the same
-order.
+order. The mapping of some types can be customized:
+
+.. code-block:: java
+
+   ProtobufToArrowConfig config = new ProtobufToArrowConfigBuilder()
+       .setEnumMapping(ProtobufToArrowConfig.EnumMapping.NAME)
+       .setUnsignedAsSigned(true)
+       .build();
 
 Type Mapping
 ------------
@@ -68,7 +77,9 @@ Type Mapping
 +---------------------------+------------------------+-------+
 | bytes                     | Binary                 |       |
 +---------------------------+------------------------+-------+
-| message, group            | Struct                 | \(2)  |
+| enum                      | Dictionary<Int32,Utf8> | \(2)  |
++---------------------------+------------------------+-------+
+| message, group            | Struct                 | \(3)  |
 +---------------------------+------------------------+-------+
 | repeated                  | List                   |       |
 +---------------------------+------------------------+-------+
@@ -79,7 +90,11 @@ Type Mapping
   instead, for consumers that do not support unsigned integers. 32-bit
   values are widened, while 64-bit values keep their bits, so values of
   2^63 and above are negative.
-* \(2) Recursive message types cannot be converted, and neither can
+* \(2) The indices refer to a dictionary of the enum value names, in
+  declaration order. Fields with the same enum type share a dictionary.
+  ``EnumMapping.NAME`` maps enums to the value name as Utf8 instead, and
+  ``EnumMapping.NUMBER`` to the value number as Int32.
+* \(3) Recursive message types cannot be converted, and neither can
   the well-known types google.protobuf.Timestamp, Struct, Value and
   ListValue.
 
@@ -88,7 +103,8 @@ A singular field is nullable if it tracks presence, as reported by
 fields, proto3 fields declared ``optional``, and fields with explicit
 presence in editions. Other fields are not nullable, since protobuf does
 not distinguish them being unset from having their default value.
-Lists, list elements, maps, map keys and map values are never null.
+Lists, list elements, maps, map keys and map values are never null,
+except for unknown enum values as described below.
 
 Message types are expanded wherever they are used, so the size of the
 schema depends on the number of paths through the message types rather
@@ -134,3 +150,33 @@ is rejected.
 
 If a batch fails to convert, the messages that were read for it are
 lost, and the iterator throws ``IllegalStateException`` from then on.
+
+Enums
+-----
+
+With ``EnumMapping.DICTIONARY``, the default, the iterator creates the
+dictionaries of the enum fields when it is created. They are available
+from ``ProtobufToArrowVectorIterator.getDictionaryProvider()``, for
+example to write the batches with an ``ArrowStreamWriter``. By default,
+the iterator creates its own dictionary provider and closes it when the
+iterator is closed, so the iterator must stay open while the
+dictionaries are used.
+
+A dictionary provider can instead be set with ``setProvider``. The
+caller then owns it and must close it. Dictionaries that are already in
+the provider are reused when they hold the values of the same enum
+type, and new dictionaries get ids that the provider does not use yet,
+so a provider can be shared by the conversions of several message
+types. In that case, the dictionary ids in the schema that
+``protobufToArrowSchema`` returns can change when an iterator for
+another message type adds dictionaries, so use the schema of the
+batches instead. A config must not be used by several threads at once,
+since creating an iterator can add dictionaries to its provider.
+
+Open enums, such as proto3 enums, can hold values that are not defined
+in the enum, for example when a message was written with a newer
+version of the enum. By default, converting such a value fails.
+``EnumMapping.NUMBER`` keeps the number, and
+``setUnknownEnumValues(UnknownEnumValues.NULL)`` converts it to null
+with the other mappings, which makes the fields of open enum types
+nullable, including list elements and map values.

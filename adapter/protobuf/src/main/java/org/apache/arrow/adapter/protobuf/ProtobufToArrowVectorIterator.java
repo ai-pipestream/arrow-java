@@ -22,12 +22,16 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.apache.arrow.util.Preconditions;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.dictionary.DictionaryProvider;
 import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.arrow.vector.util.ValueVectorUtility;
 
 /**
  * VectorSchemaRoot iterator for converting protobuf messages in batches. Each batch is a new root,
  * which the caller is responsible for closing.
+ *
+ * <p>If enums are mapped to dictionaries, the batches refer to the dictionaries of {@link
+ * #getDictionaryProvider()}.
  *
  * <p>If converting a batch fails, the messages read for that batch are lost, and every later call
  * to {@link #hasNext()} or {@link #next()} throws an {@link IllegalStateException}.
@@ -49,6 +53,11 @@ public final class ProtobufToArrowVectorIterator
 
   private final Schema schema;
 
+  private final DictionaryProvider.MapDictionaryProvider provider;
+
+  // Whether the iterator created the provider, and closes it
+  private final boolean ownsProvider;
+
   private Throwable failure;
 
   private boolean closed;
@@ -57,19 +66,50 @@ public final class ProtobufToArrowVectorIterator
       Descriptor descriptor,
       Iterator<? extends Message> messages,
       ProtobufToArrowConfig config,
-      Schema schema) {
+      Schema schema,
+      DictionaryProvider.MapDictionaryProvider provider,
+      boolean ownsProvider) {
     this.descriptor = descriptor;
     this.messages = messages;
     this.config = config;
     this.schema = schema;
+    this.provider = provider;
+    this.ownsProvider = ownsProvider;
   }
 
   static ProtobufToArrowVectorIterator create(
       Descriptor descriptor, Iterator<? extends Message> messages, ProtobufToArrowConfig config) {
     Preconditions.checkNotNull(config.getAllocator(), "allocator cannot be null");
 
-    Schema schema = new SchemaConverter(config).convert(descriptor);
-    return new ProtobufToArrowVectorIterator(descriptor, messages, config, schema);
+    DictionaryProvider.MapDictionaryProvider provider = config.getProvider();
+    boolean ownsProvider = provider == null;
+    if (ownsProvider) {
+      provider = new DictionaryProvider.MapDictionaryProvider();
+    }
+    try {
+      SchemaConverter converter = new SchemaConverter(config, provider);
+      Schema schema = converter.convert(descriptor);
+      converter.addDictionaries(config.getAllocator());
+      return new ProtobufToArrowVectorIterator(
+          descriptor, messages, config, schema, provider, ownsProvider);
+    } catch (Throwable t) {
+      if (ownsProvider) {
+        provider.close();
+      }
+      throw t;
+    }
+  }
+
+  /**
+   * Returns the provider of the dictionaries of enum fields. This is the provider of the config if
+   * it has one. Otherwise, the iterator created the provider, and closing the iterator closes it.
+   *
+   * @return the provider of the dictionaries of enum fields
+   * @throws IllegalStateException if the iterator is closed
+   */
+  public DictionaryProvider getDictionaryProvider() {
+    Preconditions.checkState(!closed, "The iterator is closed");
+    return provider;
   }
 
   @Override
@@ -140,9 +180,17 @@ public final class ProtobufToArrowVectorIterator
             + actual.getFullName());
   }
 
-  /** Closes the iterator. Batches that it returned are not affected. */
+  /**
+   * Closes the iterator, and the dictionary provider if the iterator created it. Batches that it
+   * returned are not closed.
+   */
   @Override
   public void close() {
-    closed = true;
+    if (!closed) {
+      closed = true;
+      if (ownsProvider) {
+        provider.close();
+      }
+    }
   }
 }
