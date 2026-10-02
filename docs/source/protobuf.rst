@@ -23,7 +23,7 @@ The Arrow Protobuf Adapter assists with working with Protocol Buffers
 and Arrow data. It works from message descriptors, so descriptors of
 generated message classes and descriptors loaded at runtime are both
 supported. Currently, it supports converting message descriptors to
-Arrow schemas.
+Arrow schemas, and messages to Arrow VectorSchemaRoots.
 
 The adapter is experimental. The well-known types
 ``google.protobuf.Duration`` and ``Any``, and wrapper types such as
@@ -95,3 +95,42 @@ schema depends on the number of paths through the message types rather
 than on the number of types. If each message type has two fields of the
 next type, the schema doubles in size at each level, so descriptors from
 untrusted sources should be checked before they are converted.
+
+Message to VectorSchemaRoot Conversion
+======================================
+
+This can be accessed via the ProtobufToArrow class. The resulting
+ProtobufToArrowVectorIterator converts messages to Arrow data in
+batches, using the schema described above. Each batch is a new
+VectorSchemaRoot that the caller must close.
+
+.. code-block:: java
+
+   ProtobufToArrowConfig config = new ProtobufToArrowConfigBuilder(allocator)
+       .setTargetBatchSize(4096)
+       .build();
+   try (ProtobufToArrowVectorIterator it =
+       ProtobufToArrow.protobufToArrowIterator(MyMessage.getDescriptor(), messages, config)) {
+     while (it.hasNext()) {
+       try (VectorSchemaRoot root = it.next()) {
+         // Consume the root…
+       }
+     }
+   }
+
+Fields that track presence are null when they are not set, even if
+they have a default value. Map fields keep the last entry of each key,
+as generated messages do, even if a ``DynamicMessage`` holds a key more
+than once after parsing. Strings are decoded by protobuf-java, which
+replaces bytes that are not valid UTF-8 with U+FFFD. Protobuf does not
+validate UTF-8 in proto2 strings when parsing, so invalid bytes in such
+strings are lost.
+
+The messages can be generated messages or ``DynamicMessage`` instances,
+but their descriptor must be the same ``Descriptor`` instance as the
+one passed to ``protobufToArrowIterator``. A descriptor built
+separately for the same type, for example from a ``FileDescriptorSet``,
+is rejected.
+
+If a batch fails to convert, the messages that were read for it are
+lost, and the iterator throws ``IllegalStateException`` from then on.

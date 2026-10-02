@@ -16,13 +16,46 @@
  */
 package org.apache.arrow.adapter.protobuf;
 
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.util.Preconditions;
+
 /** This class configures the Protobuf-to-Arrow conversion process. */
 public final class ProtobufToArrowConfig {
 
+  private final BufferAllocator allocator;
+
+  private final int targetBatchSize;
+
   private final boolean unsignedAsSigned;
 
-  ProtobufToArrowConfig(boolean unsignedAsSigned) {
+  ProtobufToArrowConfig(BufferAllocator allocator, int targetBatchSize, boolean unsignedAsSigned) {
+    Preconditions.checkArgument(
+        targetBatchSize == ProtobufToArrowVectorIterator.NO_LIMIT_BATCH_SIZE || targetBatchSize > 0,
+        "invalid targetBatchSize: %s",
+        targetBatchSize);
+
+    this.allocator = allocator;
+    this.targetBatchSize = targetBatchSize;
     this.unsignedAsSigned = unsignedAsSigned;
+  }
+
+  /**
+   * Returns the allocator that vectors are allocated with.
+   *
+   * @return the allocator, or null if the config can only convert descriptors
+   */
+  public BufferAllocator getAllocator() {
+    return allocator;
+  }
+
+  /**
+   * Returns the maximum number of messages in each batch.
+   *
+   * @return the maximum number of messages in each batch, or {@link
+   *     ProtobufToArrowVectorIterator#NO_LIMIT_BATCH_SIZE} to convert all messages into one batch
+   */
+  public int getTargetBatchSize() {
+    return targetBatchSize;
   }
 
   /**

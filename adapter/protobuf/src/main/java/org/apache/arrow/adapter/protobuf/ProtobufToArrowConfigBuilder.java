@@ -16,14 +16,47 @@
  */
 package org.apache.arrow.adapter.protobuf;
 
+import org.apache.arrow.memory.BufferAllocator;
+
 /** This class builds {@link ProtobufToArrowConfig}s. */
 public final class ProtobufToArrowConfigBuilder {
 
+  private final BufferAllocator allocator;
+
+  private int targetBatchSize;
+
   private boolean unsignedAsSigned;
 
-  /** Constructs a builder for converting descriptors to schemas. */
+  /**
+   * Constructs a builder for converting descriptors to schemas. Converting messages requires an
+   * allocator, see {@link #ProtobufToArrowConfigBuilder(BufferAllocator)}.
+   */
   public ProtobufToArrowConfigBuilder() {
+    this(null);
+  }
+
+  /**
+   * Constructs a builder for converting messages to vectors.
+   *
+   * @param allocator The memory allocator to construct the Arrow vectors with.
+   */
+  public ProtobufToArrowConfigBuilder(BufferAllocator allocator) {
+    this.allocator = allocator;
+    this.targetBatchSize = ProtobufToArrowVectorIterator.DEFAULT_BATCH_SIZE;
     this.unsignedAsSigned = false;
+  }
+
+  /**
+   * Sets the maximum number of messages in each batch, or {@link
+   * ProtobufToArrowVectorIterator#NO_LIMIT_BATCH_SIZE} to convert all messages into one batch. The
+   * default is {@link ProtobufToArrowVectorIterator#DEFAULT_BATCH_SIZE}.
+   *
+   * @param targetBatchSize the maximum number of messages in each batch
+   * @return this builder
+   */
+  public ProtobufToArrowConfigBuilder setTargetBatchSize(int targetBatchSize) {
+    this.targetBatchSize = targetBatchSize;
+    return this;
   }
 
   /**
@@ -46,6 +79,6 @@ public final class ProtobufToArrowConfigBuilder {
    * @return the config
    */
   public ProtobufToArrowConfig build() {
-    return new ProtobufToArrowConfig(unsignedAsSigned);
+    return new ProtobufToArrowConfig(allocator, targetBatchSize, unsignedAsSigned);
   }
 }

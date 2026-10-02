@@ -17,6 +17,8 @@
 package org.apache.arrow.adapter.protobuf;
 
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Message;
+import java.util.Iterator;
 import org.apache.arrow.util.Preconditions;
 import org.apache.arrow.vector.types.pojo.Schema;
 
@@ -69,5 +71,28 @@ public final class ProtobufToArrow {
     Preconditions.checkNotNull(config, "config cannot be null");
 
     return new SchemaConverter(config).convert(descriptor);
+  }
+
+  /**
+   * Convert protobuf messages to Arrow vectors in batches, with the schema returned by {@link
+   * #protobufToArrowSchema}. Fields that track presence and are not set are null.
+   *
+   * <p>The messages can be generated messages or {@link com.google.protobuf.DynamicMessage}s, but
+   * their descriptor must be the given descriptor instance. Messages of the same type whose
+   * descriptor was built separately, for example from a {@code FileDescriptorSet}, are rejected.
+   *
+   * @param descriptor The descriptor of the messages
+   * @param messages The messages to convert
+   * @param config Configuration options for conversion, which must have an allocator
+   * @return An iterator over batches of the converted messages, which must be closed
+   * @throws IllegalArgumentException if the message type is recursive
+   */
+  public static ProtobufToArrowVectorIterator protobufToArrowIterator(
+      Descriptor descriptor, Iterator<? extends Message> messages, ProtobufToArrowConfig config) {
+    Preconditions.checkNotNull(descriptor, "Protobuf descriptor cannot be null");
+    Preconditions.checkNotNull(messages, "messages cannot be null");
+    Preconditions.checkNotNull(config, "config cannot be null");
+
+    return ProtobufToArrowVectorIterator.create(descriptor, messages, config);
   }
 }

@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-/** Converts protobuf message descriptors to Arrow schemas. */
+/** Converts protobuf messages to Arrow data. */
 @SuppressWarnings("requires-transitive-automatic")
 module org.apache.arrow.adapter.protobuf {
   exports org.apache.arrow.adapter.protobuf;
 
   requires transitive com.google.protobuf;
+  requires transitive org.apache.arrow.memory.core;
   requires transitive org.apache.arrow.vector;
-  requires org.apache.arrow.memory.core;
 }
