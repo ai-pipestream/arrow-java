@@ -44,5 +44,6 @@ on the Arrow format and other language bindings see the :doc:`parent documentati
    substrait
    cdata
    jdbc
+   protobuf
    Reference (javadoc) <reference/index>
    Cookbook <https://arrow.apache.org/cookbook/java/>

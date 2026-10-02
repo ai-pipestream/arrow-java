@@ -76,6 +76,7 @@ under the License.
     <module>performance</module>
     <module>algorithm</module>
     <module>adapter/avro</module>
+    <module>adapter/protobuf</module>
     <module>compression</module>
   </modules>
 
